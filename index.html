@@ -135,6 +135,13 @@
       <select id="curSel" class="cur tiny" style="width:88px;padding:8px" onchange="setCurrency(this.value)"></select>
       <button class="danger tiny" onclick="resetAll()">Reset</button>
     </div>
+    <div id="fxRow" style="margin-top:10px">
+      <label id="fxLabel">1 = ? HK$</label>
+      <div class="row">
+        <input id="fxRate" type="number" inputmode="decimal" placeholder="0.00" min="0" step="0.0001">
+        <button class="ghost tiny" style="flex:none" onclick="fetchFxRate()">↻ latest</button>
+      </div>
+    </div>
     <div class="hint">Everything is saved locally in this browser. No account, no server. Use “Share / back up” to move the trip to another phone.</div>
   </div>
 </div>
@@ -160,18 +167,38 @@
 </dialog>
 
 <script>
-const CURRENCIES = ["$","£","€","¥","HK$","₩","฿","₹","A$","C$"];
+const CURRENCIES = ["$","£","€","¥","HK$","₩","฿","₹","A$","C$","NT$"];
+const FX_CODE = {"NT$":"TWD","$":"USD","£":"GBP","€":"EUR","¥":"JPY","HK$":"HKD","₩":"KRW","฿":"THB","₹":"INR","A$":"AUD","C$":"CAD"};
 const LS_KEY = "tripSplit.v1";
 let state = load();
 
-function blank(){ return { name:"", currency:"HK$", people:[], expenses:[] }; }
+function blank(){ return { name:"", currency:"HK$", people:[], expenses:[], fxToHkd:null }; }
 function load(){
-  try{ const s = JSON.parse(localStorage.getItem(LS_KEY)); if(s && s.people) return s; }catch(e){}
+  try{ const s = JSON.parse(localStorage.getItem(LS_KEY)); if(s && s.people){ if(s.fxToHkd===undefined) s.fxToHkd=null; return s; } }catch(e){}
   return blank();
 }
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
 function money(n){ return state.currency + (Math.round(n*100)/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function hkd(n){ return Math.round(n*state.fxToHkd); }
+function fxSuffix(n){
+  if(!state.fxToHkd || state.currency==="HK$") return "";
+  return ` (≈ HK$${hkd(n).toLocaleString()})`;
+}
+async function fetchFxRate(){
+  const code = FX_CODE[state.currency];
+  if(!code){ alert("Couldn't fetch rate, enter it manually"); return; }
+  try{
+    const res = await fetch(`https://open.er-api.com/v6/latest/${code}`);
+    const data = await res.json();
+    const rate = data && data.rates && data.rates.HKD;
+    if(!rate) throw new Error("no rate");
+    state.fxToHkd = rate;
+    save(); render();
+  }catch(e){
+    alert("Couldn't fetch rate, enter it manually");
+  }
+}
 
 /* ---------- People ---------- */
 function addPerson(){
@@ -259,7 +286,7 @@ function render(){
   renderSplit();
   // expenses
   const total = state.expenses.reduce((s,e)=>s+e.amt,0);
-  document.getElementById("totalLabel").textContent = state.expenses.length ? "· "+money(total) : "";
+  document.getElementById("totalLabel").textContent = state.expenses.length ? "· "+money(total)+fxSuffix(total) : "";
   const list=document.getElementById("expenseList");
   list.innerHTML = state.expenses.length ? "" : '<div class="empty">No expenses yet.</div>';
   state.expenses.forEach(e=>{
@@ -289,13 +316,23 @@ function render(){
   sx.innerHTML = tx.length ? "" : (state.expenses.length? '<div class="muted">Everyone is settled up 🎉</div>' : "");
   tx.forEach(t=>{
     const d=document.createElement("div"); d.className="settle";
-    d.innerHTML=`<span>💸</span><span><b>${t.from}</b> pays <b>${t.to}</b></span><span style="flex:1"></span><b>${money(t.amt)}</b>`;
+    d.innerHTML=`<span>💸</span><span><b>${t.from}</b> pays <b>${t.to}</b></span><span style="flex:1"></span><b>${money(t.amt)}</b><span class="muted">${fxSuffix(t.amt)}</span>`;
     sx.appendChild(d);
   });
   // currency select
   const cs=document.getElementById("curSel");
   if(!cs.options.length) cs.innerHTML = CURRENCIES.map(c=>`<option>${c}</option>`).join("");
   cs.value = state.currency;
+  // FX control
+  const fxRow = document.getElementById("fxRow");
+  if(state.currency === "HK$"){
+    fxRow.style.display = "none";
+  } else {
+    fxRow.style.display = "";
+    document.getElementById("fxLabel").textContent = `1 ${state.currency} = ? HK$`;
+    const fxInput = document.getElementById("fxRate");
+    if(document.activeElement !== fxInput) fxInput.value = state.fxToHkd ?? "";
+  }
   save();
 }
 function renderSplit(){
@@ -335,6 +372,11 @@ function resetAll(){ if(confirm("Erase this trip and start over?")){ state=blank
 document.getElementById("tripName").addEventListener("input",e=>{ state.name=e.target.value; save(); });
 document.getElementById("newPerson").addEventListener("keydown",e=>{ if(e.key==="Enter") addPerson(); });
 document.getElementById("expAmt").addEventListener("keydown",e=>{ if(e.key==="Enter") addExpense(); });
+document.getElementById("fxRate").addEventListener("input",e=>{
+  const v = parseFloat(e.target.value);
+  state.fxToHkd = (isNaN(v) || v<=0) ? null : v;
+  save(); render();
+});
 
 render();
 </script>
